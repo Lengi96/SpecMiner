@@ -61,7 +61,17 @@ Start the local web UI for a recorded run:
 specminer serve ./runs/run-001
 ```
 
-Studio shows coverage, claims, screenshots, recent evidence, and lets reviewers update `review.json` from the browser.
+Studio is the recommended entry point for non-technical users. It shows coverage, claims, screenshots, recent evidence, and lets reviewers update `review.json` from the browser.
+
+Guided workflow:
+
+1. Open Studio.
+2. Enter a website URL in **Neue Website analysieren**.
+3. Choose **Manuell durchklicken** to open a browser and record user clicks, or **Schneller Überblick** for a background crawl.
+4. Click **Start**.
+5. For manual recording, explore the opened browser and click **Fertig** in Studio when done.
+6. Studio generates Markdown, JSON, HTML, Gherkin, review data, and a Playwright skeleton automatically.
+7. Use **Letzte Analysen** to reopen previous runs without terminal commands.
 
 ## Browser Overlay
 

@@ -12,5 +12,8 @@ describe("renderStudioHtml", () => {
     expect(html).toContain("/api/workflow/start");
     expect(html).toContain("/api/workflow/stop");
     expect(html).toContain("/api/workflow/status");
+    expect(html).toContain("/api/runs");
+    expect(html).toContain("/api/runs/select");
+    expect(html).toContain("Letzte Analysen");
   });
 });

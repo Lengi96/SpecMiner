@@ -364,6 +364,35 @@ export function renderStudioHtml(): string {
 
       .workflow-log:not(:empty) { display: block; }
 
+      .run-library {
+        border-top: 1px solid var(--border);
+        display: grid;
+        gap: 10px;
+        padding-top: 12px;
+      }
+
+      .run-library h3 {
+        font-size: 13px;
+        margin: 0;
+      }
+
+      .run-picker {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        min-height: 38px;
+        padding: 8px 10px;
+        width: 100%;
+      }
+
+      .run-summary {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        min-height: 34px;
+      }
+
       .main-grid {
         display: grid;
         gap: 18px;
@@ -623,6 +652,12 @@ export function renderStudioHtml(): string {
                   </div>
                 </div>
                 <button class="action" id="reloadRun">${icon("refresh")}Aktuellen Run laden</button>
+                <div class="run-library">
+                  <h3>Letzte Analysen</h3>
+                  <select class="run-picker" id="runPicker"></select>
+                  <div class="run-summary" id="runSummary">Noch keine Run-Liste geladen.</div>
+                  <button class="action" id="loadSelectedRun">${icon("folder")}Analyse öffnen</button>
+                </div>
                 <div class="workflow-log" id="workflowLog"></div>
               </aside>
             </article>
@@ -723,6 +758,7 @@ export function renderStudioHtml(): string {
     <script>
       let state;
       let workflow;
+      let runLibrary = [];
       let lastReadyRunDir = "";
       const views = ["overview", "claims", "evidence", "review"];
       const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[char]));
@@ -736,6 +772,8 @@ export function renderStudioHtml(): string {
       });
       byId("refreshButton").addEventListener("click", load);
       byId("reloadRun").addEventListener("click", load);
+      byId("loadSelectedRun").addEventListener("click", loadSelectedRun);
+      byId("runPicker").addEventListener("change", renderRunSummary);
       byId("startRecording").addEventListener("click", startWorkflow);
       byId("stopRecording").addEventListener("click", stopWorkflow);
       byId("claimSearch").addEventListener("input", renderClaims);
@@ -758,6 +796,43 @@ export function renderStudioHtml(): string {
         renderClaims();
         renderEvidence();
         renderReview();
+        await loadRuns();
+      }
+
+      async function loadRuns() {
+        const result = await fetch("/api/runs").then((response) => response.json());
+        runLibrary = result.runs || [];
+        const picker = byId("runPicker");
+        picker.innerHTML = runLibrary.map((run) =>
+          '<option value="' + esc(run.dir) + '"' + (run.isCurrent ? " selected" : "") + '>' + esc(run.baseUrl) + ' - ' + esc(formatDate(run.startedAt)) + '</option>'
+        ).join("");
+        renderRunSummary();
+      }
+
+      function renderRunSummary() {
+        const selected = runLibrary.find((run) => run.dir === byId("runPicker").value);
+        byId("runSummary").textContent = selected
+          ? selected.claimCount + " claims - " + selected.evidenceCount + " evidence - " + selected.name
+          : "Keine gespeicherten Analysen gefunden.";
+        updateWorkflowDisabledState(workflow?.status || "idle");
+      }
+
+      async function loadSelectedRun() {
+        const dir = byId("runPicker").value;
+        if (!dir) return;
+        const response = await fetch("/api/runs/select", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ dir })
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          renderWorkflow({ status: "failed", message: result.error || "Analyse konnte nicht geladen werden.", log: [] });
+          return;
+        }
+        workflow = result;
+        renderWorkflow(workflow);
+        await load();
       }
 
       async function startWorkflow() {
@@ -792,6 +867,7 @@ export function renderStudioHtml(): string {
           if (workflow.status === "ready" && workflow.currentRunDir && workflow.currentRunDir !== lastReadyRunDir) {
             lastReadyRunDir = workflow.currentRunDir;
             await load();
+            await loadRuns();
           }
         } catch {
           renderWorkflow({ status: "failed", message: "Studio workflow API is not reachable.", log: [] });
@@ -813,11 +889,26 @@ export function renderStudioHtml(): string {
         byId("workflowStatus").textContent = labels[status] || status;
         byId("workflowMessage").textContent = current.message || "Noch keine neue Analyse gestartet.";
         byId("workflowLog").textContent = (current.log || []).slice(-8).join("\\n");
-        byId("startRecording").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
+        updateWorkflowDisabledState(status);
+      }
+
+      function updateWorkflowDisabledState(status) {
+        const busy = ["recording", "crawling", "stopping", "generating"].includes(status);
+        byId("startRecording").disabled = busy;
         byId("stopRecording").disabled = status !== "recording";
-        byId("reloadRun").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
-        byId("targetUrl").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
-        byId("recordMode").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
+        byId("reloadRun").disabled = busy;
+        byId("loadSelectedRun").disabled = busy || !byId("runPicker").value;
+        byId("targetUrl").disabled = busy;
+        byId("recordMode").disabled = busy;
+      }
+
+      function formatDate(value) {
+        if (!value) return "unknown";
+        try {
+          return new Date(value).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+        } catch {
+          return value;
+        }
       }
 
       function renderOverview() {

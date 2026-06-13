@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join, normalize, resolve, sep } from "node:path";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { buildCoverageReport } from "../coverage/coverage-report.js";
@@ -30,6 +30,16 @@ interface WorkflowState {
   child?: ChildProcess;
 }
 
+interface RunSummary {
+  dir: string;
+  name: string;
+  baseUrl: string;
+  startedAt: string;
+  claimCount: number;
+  evidenceCount: number;
+  isCurrent: boolean;
+}
+
 export async function serveStudio(options: StudioServerOptions): Promise<{ close: () => Promise<void>; url: string }> {
   const initialRoot = resolve(options.runDir);
   const state: WorkflowState = {
@@ -37,7 +47,7 @@ export async function serveStudio(options: StudioServerOptions): Promise<{ close
     runsRoot: dirname(initialRoot),
     status: "idle",
     lastRunDir: initialRoot,
-    message: "Ready.",
+    message: "Bereit.",
     log: []
   };
   const server = createServer(async (request, response) => {
@@ -63,6 +73,24 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
     return;
   }
   if (url.pathname === "/api/workflow/status") {
+    send(response, 200, "application/json; charset=utf-8", JSON.stringify(publicWorkflowState(state)));
+    return;
+  }
+  if (url.pathname === "/api/runs") {
+    send(response, 200, "application/json; charset=utf-8", JSON.stringify({ runs: await listRuns(state) }));
+    return;
+  }
+  if (url.pathname === "/api/runs/select" && request.method === "POST") {
+    if (isBusy(state)) {
+      send(response, 409, "application/json; charset=utf-8", JSON.stringify({ error: "Cannot switch runs while SpecMiner is recording or generating." }));
+      return;
+    }
+    const body = JSON.parse(await readRequestBody(request)) as { dir?: string };
+    const nextRoot = safeRunRoot(state, String(body.dir ?? ""));
+    await new ArtifactStore(nextRoot).readRun();
+    state.currentRoot = nextRoot;
+    state.lastRunDir = nextRoot;
+    state.message = "Analyse geladen.";
     send(response, 200, "application/json; charset=utf-8", JSON.stringify(publicWorkflowState(state)));
     return;
   }
@@ -121,7 +149,7 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
 }
 
 async function startRecording(state: WorkflowState, targetUrl: string, mode: "manual" | "crawl"): Promise<void> {
-  if (state.child && state.status !== "ready" && state.status !== "failed" && state.status !== "idle") {
+  if (isBusy(state)) {
     throw new Error("A recording or generation is already running.");
   }
   const runDir = join(state.runsRoot, `${timestampStem()}-${urlStem(targetUrl)}`);
@@ -133,7 +161,7 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
   state.message =
     mode === "crawl"
       ? "Safe crawl started. SpecMiner is collecting same-origin pages."
-      : "Recording started. Use the opened browser window, then click Stop recording.";
+      : "Aufzeichnung gestartet. Nutze das geöffnete Browserfenster und klicke danach in Studio auf Fertig.";
   state.log = [];
 
   const cliPath = fileURLToPath(new URL("../cli/index.js", import.meta.url));
@@ -166,18 +194,67 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
   });
 }
 
+function isBusy(state: WorkflowState): boolean {
+  return Boolean(state.child) || ["recording", "crawling", "stopping", "generating"].includes(state.status);
+}
+
+async function listRuns(state: WorkflowState): Promise<RunSummary[]> {
+  const names = await readdir(state.runsRoot, { withFileTypes: true }).catch(() => []);
+  const summaries = await Promise.all(
+    names
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry): Promise<RunSummary | undefined> => {
+        const dir = join(state.runsRoot, entry.name);
+        const store = new ArtifactStore(dir);
+        try {
+          const run = await store.readRun();
+          const evidence = await store.readEvidence();
+          const spec = await readOrGenerateSpec(dir, run, evidence, await store.readEvents(), await store.readPageSnapshots());
+          return {
+            dir,
+            name: basename(dir),
+            baseUrl: run.baseUrl,
+            startedAt: run.startedAt,
+            claimCount: spec.claims.length,
+            evidenceCount: evidence.length,
+            isCurrent: resolve(dir) === resolve(state.currentRoot)
+          };
+        } catch {
+          return undefined;
+        }
+      })
+  );
+  return summaries
+    .filter((run): run is RunSummary => Boolean(run))
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, 30);
+}
+
+function safeRunRoot(state: WorkflowState, dir: string): string {
+  const resolved = resolve(dir);
+  const runsRoot = resolve(state.runsRoot);
+  if (resolved !== runsRoot && resolved.startsWith(`${runsRoot}${sep}`)) {
+    return resolved;
+  }
+  const byName = resolve(join(runsRoot, dir));
+  if (byName !== runsRoot && byName.startsWith(`${runsRoot}${sep}`)) {
+    return byName;
+  }
+  throw new Error(`Run directory is outside the configured runs root: ${relative(runsRoot, resolved)}`);
+}
+
 async function stopRecording(state: WorkflowState): Promise<void> {
   if (!state.child || state.status !== "recording") {
     return;
   }
   state.status = "stopping";
-  state.message = "Stopping recording and saving the final browser state.";
+  state.message = "Aufzeichnung wird beendet und gespeichert.";
   state.child.stdin?.write("\n");
 }
 
 async function generateRun(state: WorkflowState, runDir: string): Promise<void> {
   state.status = "generating";
-  state.message = "Generating requirements, review draft, report, Gherkin and Playwright skeleton.";
+  state.message = "Anforderungen, Review-Entwurf, Report, Gherkin und Playwright-Skeleton werden erzeugt.";
   const cliPath = fileURLToPath(new URL("../cli/index.js", import.meta.url));
   const child = spawn(process.execPath, [
     cliPath,
@@ -213,7 +290,7 @@ async function generateRun(state: WorkflowState, runDir: string): Promise<void> 
     state.lastRunDir = runDir;
     state.activeRunDir = undefined;
     state.status = "ready";
-    state.message = "Run ready. Review the generated requirements below.";
+    state.message = "Analyse fertig. Die generierten Anforderungen sind geladen.";
   });
 }
 
