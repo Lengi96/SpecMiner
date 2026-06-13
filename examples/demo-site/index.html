@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Acme Kundenportal</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f8fb;
+        color: #172033;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 48px;
+        background: #ffffff;
+        border-bottom: 1px solid #d9deea;
+      }
+
+      nav a {
+        color: #46526a;
+        font-size: 14px;
+        font-weight: 600;
+        margin-left: 24px;
+        text-decoration: none;
+      }
+
+      main {
+        display: grid;
+        gap: 28px;
+        grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.1fr);
+        padding: 44px 48px;
+      }
+
+      section {
+        background: #ffffff;
+        border: 1px solid #d9deea;
+        border-radius: 8px;
+        padding: 28px;
+      }
+
+      h1,
+      h2 {
+        margin-top: 0;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        margin-bottom: 16px;
+      }
+
+      input,
+      select,
+      textarea {
+        border: 1px solid #aeb8cb;
+        border-radius: 6px;
+        font: inherit;
+        padding: 10px 12px;
+      }
+
+      button {
+        background: #0f6b5c;
+        border: 0;
+        border-radius: 6px;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+        padding: 10px 14px;
+      }
+
+      .secondary {
+        background: #334155;
+      }
+
+      .error {
+        color: #a61b1b;
+        font-weight: 700;
+        margin-top: 12px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #e1e6f0;
+        padding: 12px;
+        text-align: left;
+      }
+
+      th {
+        color: #46526a;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Acme Kundenportal</strong>
+      <nav aria-label="Hauptnavigation">
+        <a href="#customers">Kunden</a>
+        <a href="#orders">Aufträge</a>
+        <a href="#support">Support</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-labelledby="customer-form-heading">
+        <h1 id="customer-form-heading">Kundendaten erfassen</h1>
+        <p>Neue Kunden werden mit E-Mail-Adresse, Vertragsart und Ansprechpartner angelegt.</p>
+        <form action="/customers" method="post">
+          <label>
+            E-Mail-Adresse
+            <input name="email" type="email" required placeholder="kunde@example.com" value="anna.schmidt@example.com" />
+          </label>
+          <label>
+            Vertragsart
+            <select name="contractType" required>
+              <option>Standard</option>
+              <option>Premium</option>
+            </select>
+          </label>
+          <label>
+            Ansprechpartner
+            <input name="contactName" required value="Anna Schmidt" />
+          </label>
+          <button type="submit">Kunde speichern</button>
+          <button class="secondary" type="button">Entwurf prüfen</button>
+          <p class="error" role="alert">E-Mail-Adresse ist ein Pflichtfeld.</p>
+        </form>
+      </section>
+
+      <section id="customers" aria-labelledby="customer-table-heading">
+        <h2 id="customer-table-heading">Aktive Kunden</h2>
+        <table>
+          <caption>
+            Kunden mit offenem Onboarding
+          </caption>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Vertragsart</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Meyer GmbH</td>
+              <td>Onboarding</td>
+              <td>Premium</td>
+            </tr>
+            <tr>
+              <td>Nord AG</td>
+              <td>Aktiv</td>
+              <td>Standard</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specminer.dev/schemas/specminer.schema.json",
+  "title": "SpecMiner Spec Document",
+  "type": "object",
+  "required": ["run", "generatedAt", "summary", "claims", "modules", "openQuestions"],
+  "properties": {
+    "run": {
+      "type": "object",
+      "required": ["id", "startedAt", "baseUrl", "toolVersion", "privacyProfile"]
+    },
+    "generatedAt": { "type": "string" },
+    "summary": { "type": "string" },
+    "claims": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/specClaim" }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "urlPatterns", "evidenceIds", "stories", "acceptanceCriteria", "businessRules", "testCases"]
+      }
+    },
+    "openQuestions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/specClaim" }
+    }
+  },
+  "$defs": {
+    "specClaim": {
+      "type": "object",
+      "required": ["id", "kind", "category", "text", "evidenceIds", "confidence"],
+      "properties": {
+        "kind": {
+          "enum": ["observation", "derived", "assumption", "open_question"]
+        },
+        "category": {
+          "enum": ["system", "module", "user_story", "acceptance_criteria", "business_rule", "test_case"]
+        },
+        "confidence": {
+          "enum": ["high", "medium", "low"]
+        }
+      }
+    }
+  }
+}

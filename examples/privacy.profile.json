@@ -1,0 +1,11 @@
+{
+  "name": "example",
+  "fieldNamePatterns": ["password", "token", "email", "customer"],
+  "masks": [
+    {
+      "name": "email",
+      "pattern": "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b",
+      "replacement": "[EMAIL]"
+    }
+  ]
+}
