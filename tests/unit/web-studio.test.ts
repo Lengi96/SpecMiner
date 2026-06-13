@@ -6,7 +6,11 @@ describe("renderStudioHtml", () => {
     const html = renderStudioHtml();
 
     expect(html).toContain("SpecMiner Studio");
+    expect(html).toContain("Neue Website analysieren");
     expect(html).toContain("/api/run");
     expect(html).toContain("/api/review");
+    expect(html).toContain("/api/workflow/start");
+    expect(html).toContain("/api/workflow/stop");
+    expect(html).toContain("/api/workflow/status");
   });
 });

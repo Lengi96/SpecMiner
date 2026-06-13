@@ -190,6 +190,13 @@ export function renderStudioHtml(): string {
         color: #fff;
       }
 
+      .action:disabled,
+      .url-input:disabled,
+      select:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
       .content {
         display: grid;
         gap: 18px;
@@ -229,6 +236,133 @@ export function renderStudioHtml(): string {
 
       .metric small { color: var(--muted); display: block; margin-top: 7px; }
       .metric.warn small { color: var(--warn); }
+
+      .wizard {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        padding: 18px;
+      }
+
+      .wizard h2 {
+        font-size: 20px;
+        margin: 0 0 6px;
+      }
+
+      .wizard-copy {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.5;
+        margin: 0;
+        max-width: 760px;
+      }
+
+      .wizard-form {
+        align-items: end;
+        display: grid;
+        gap: 10px;
+        grid-template-columns: minmax(260px, 1fr) 170px auto auto;
+        margin-top: 16px;
+      }
+
+      .url-input {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        min-height: 42px;
+        padding: 10px 12px;
+        width: 100%;
+      }
+
+      .wizard-steps {
+        display: grid;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .step {
+        align-items: center;
+        color: #344557;
+        display: flex;
+        font-size: 13px;
+        gap: 9px;
+      }
+
+      .step-number {
+        align-items: center;
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        display: inline-grid;
+        flex: 0 0 auto;
+        font-size: 12px;
+        font-weight: 700;
+        height: 24px;
+        place-items: center;
+        width: 24px;
+      }
+
+      .workflow-card {
+        align-content: start;
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .workflow-status {
+        align-items: center;
+        display: flex;
+        gap: 10px;
+      }
+
+      .status-light {
+        background: var(--success);
+        border-radius: 999px;
+        box-shadow: 0 0 0 6px rgba(19, 138, 79, 0.1);
+        height: 10px;
+        width: 10px;
+      }
+
+      .workflow-card[data-status="recording"] .status-light,
+      .workflow-card[data-status="crawling"] .status-light,
+      .workflow-card[data-status="stopping"] .status-light,
+      .workflow-card[data-status="generating"] .status-light {
+        background: var(--warn);
+        box-shadow: 0 0 0 6px rgba(181, 106, 0, 0.12);
+      }
+
+      .workflow-card[data-status="failed"] .status-light {
+        background: var(--danger);
+        box-shadow: 0 0 0 6px rgba(189, 43, 43, 0.12);
+      }
+
+      .workflow-card strong { display: block; }
+      .workflow-card small { color: var(--muted); line-height: 1.45; }
+      .workflow-card .action { justify-self: start; }
+
+      .workflow-log {
+        background: #101820;
+        border-radius: var(--radius);
+        color: #d8e8f0;
+        display: none;
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+        max-height: 130px;
+        overflow: auto;
+        padding: 10px;
+        white-space: pre-wrap;
+      }
+
+      .workflow-log:not(:empty) { display: block; }
 
       .main-grid {
         display: grid;
@@ -407,6 +541,8 @@ export function renderStudioHtml(): string {
       @media (max-width: 1100px) {
         .studio { grid-template-columns: 1fr; }
         .rail { display: none; }
+        .wizard { grid-template-columns: 1fr; }
+        .wizard-form { grid-template-columns: 1fr 1fr; }
         .main-grid { grid-template-columns: 1fr; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
@@ -414,6 +550,7 @@ export function renderStudioHtml(): string {
       @media (max-width: 680px) {
         .topbar { grid-template-columns: 1fr; }
         .top-actions { flex-wrap: wrap; }
+        .wizard-form { grid-template-columns: 1fr; }
         .metrics { grid-template-columns: 1fr; }
         .coverage-layout { grid-template-columns: 1fr; }
         .content { padding: 14px; }
@@ -459,6 +596,36 @@ export function renderStudioHtml(): string {
 
         <main class="content">
           <section id="overview" class="view active">
+            <article class="wizard" aria-labelledby="wizardTitle">
+              <div>
+                <h2 id="wizardTitle">Neue Website analysieren</h2>
+                <p class="wizard-copy">
+                  Gib eine URL ein. SpecMiner öffnet einen Browser, zeichnet deine Klicks auf und erzeugt danach automatisch Anforderungen, User Stories, Akzeptanzkriterien und Testvorschläge.
+                </p>
+                <div class="wizard-form">
+                  <label>Website-URL<input class="url-input" id="targetUrl" placeholder="https://example.com" autocomplete="url" /></label>
+                  <label>Modus<select id="recordMode"><option value="manual">Manuell durchklicken</option><option value="crawl">Schneller Überblick</option></select></label>
+                  <button class="action primary" id="startRecording">${icon("cursor")}Start</button>
+                  <button class="action" id="stopRecording">${icon("check")}Fertig</button>
+                </div>
+                <div class="wizard-steps">
+                  <div class="step"><span class="step-number">1</span><span>URL einfügen und Start klicken.</span></div>
+                  <div class="step"><span class="step-number">2</span><span>Im geöffneten Browser normal durch die Anwendung klicken.</span></div>
+                  <div class="step"><span class="step-number">3</span><span>Fertig klicken. SpecMiner generiert den Report automatisch.</span></div>
+                </div>
+              </div>
+              <aside class="workflow-card" id="workflowCard" data-status="idle">
+                <div class="workflow-status">
+                  <span class="status-light" aria-hidden="true"></span>
+                  <div>
+                    <strong id="workflowStatus">Bereit</strong>
+                    <small id="workflowMessage">Noch keine neue Analyse gestartet.</small>
+                  </div>
+                </div>
+                <button class="action" id="reloadRun">${icon("refresh")}Aktuellen Run laden</button>
+                <div class="workflow-log" id="workflowLog"></div>
+              </aside>
+            </article>
             <div class="metrics" id="metrics"></div>
             <div class="main-grid">
               <div>
@@ -555,6 +722,8 @@ export function renderStudioHtml(): string {
 
     <script>
       let state;
+      let workflow;
+      let lastReadyRunDir = "";
       const views = ["overview", "claims", "evidence", "review"];
       const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[char]));
       const byId = (id) => document.getElementById(id);
@@ -566,6 +735,9 @@ export function renderStudioHtml(): string {
         button.addEventListener("click", () => showView(button.dataset.jump));
       });
       byId("refreshButton").addEventListener("click", load);
+      byId("reloadRun").addEventListener("click", load);
+      byId("startRecording").addEventListener("click", startWorkflow);
+      byId("stopRecording").addEventListener("click", stopWorkflow);
       byId("claimSearch").addEventListener("input", renderClaims);
       byId("evidenceSearch").addEventListener("input", renderEvidence);
 
@@ -586,6 +758,66 @@ export function renderStudioHtml(): string {
         renderClaims();
         renderEvidence();
         renderReview();
+      }
+
+      async function startWorkflow() {
+        const targetUrl = byId("targetUrl").value.trim();
+        const mode = byId("recordMode").value;
+        if (!targetUrl) {
+          renderWorkflow({ status: "failed", message: "Bitte zuerst eine Website-URL eingeben.", log: [] });
+          return;
+        }
+        const response = await fetch("/api/workflow/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url: targetUrl, mode })
+        });
+        workflow = await response.json();
+        if (!response.ok) {
+          workflow = { status: "failed", message: workflow.error || "Die Analyse konnte nicht gestartet werden.", log: [] };
+        }
+        renderWorkflow(workflow);
+      }
+
+      async function stopWorkflow() {
+        const response = await fetch("/api/workflow/stop", { method: "POST" });
+        workflow = await response.json();
+        renderWorkflow(workflow);
+      }
+
+      async function pollWorkflow() {
+        try {
+          workflow = await fetch("/api/workflow/status").then((response) => response.json());
+          renderWorkflow(workflow);
+          if (workflow.status === "ready" && workflow.currentRunDir && workflow.currentRunDir !== lastReadyRunDir) {
+            lastReadyRunDir = workflow.currentRunDir;
+            await load();
+          }
+        } catch {
+          renderWorkflow({ status: "failed", message: "Studio workflow API is not reachable.", log: [] });
+        }
+      }
+
+      function renderWorkflow(current) {
+        const status = current.status || "idle";
+        const labels = {
+          idle: "Bereit",
+          recording: "Aufzeichnung läuft",
+          crawling: "Überblick läuft",
+          stopping: "Aufzeichnung wird beendet",
+          generating: "Report wird generiert",
+          ready: "Analyse fertig",
+          failed: "Fehler"
+        };
+        byId("workflowCard").dataset.status = status;
+        byId("workflowStatus").textContent = labels[status] || status;
+        byId("workflowMessage").textContent = current.message || "Noch keine neue Analyse gestartet.";
+        byId("workflowLog").textContent = (current.log || []).slice(-8).join("\\n");
+        byId("startRecording").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
+        byId("stopRecording").disabled = status !== "recording";
+        byId("reloadRun").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
+        byId("targetUrl").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
+        byId("recordMode").disabled = ["recording", "crawling", "stopping", "generating"].includes(status);
       }
 
       function renderOverview() {
@@ -711,6 +943,8 @@ export function renderStudioHtml(): string {
         return icons[name] || "";
       }
 
+      pollWorkflow();
+      setInterval(pollWorkflow, 1500);
       load().catch((error) => {
         document.body.innerHTML = "<pre style='padding:24px'>" + esc(error.stack || error.message) + "</pre>";
       });
