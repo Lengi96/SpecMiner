@@ -95,7 +95,7 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
     return;
   }
   if (url.pathname === "/api/workflow/start" && request.method === "POST") {
-    const body = JSON.parse(await readRequestBody(request)) as { url?: string; mode?: "manual" | "crawl" };
+    const body = JSON.parse(await readRequestBody(request)) as { url?: string; mode?: "manual" | "auth" | "crawl" };
     const targetUrl = String(body.url ?? "").trim();
     if (!/^https?:\/\//i.test(targetUrl)) {
       send(response, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Please enter a valid http(s) URL." }));
@@ -126,7 +126,8 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
     const spec = await readOrGenerateSpec(root, run, evidence, events, pages);
     const coverage = buildCoverageReport(evidence, events, pages);
     const review = await readOrCreateReview(root, spec);
-    send(response, 200, "application/json; charset=utf-8", JSON.stringify({ run, spec, coverage, evidence, events, pages, review }));
+    const privacy = buildPrivacySummary(run, evidence);
+    send(response, 200, "application/json; charset=utf-8", JSON.stringify({ run, spec, coverage, evidence, events, pages, review, privacy }));
     return;
   }
   if (url.pathname === "/api/review" && request.method === "POST") {
@@ -148,7 +149,7 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
   send(response, 404, "text/plain; charset=utf-8", "Not found");
 }
 
-async function startRecording(state: WorkflowState, targetUrl: string, mode: "manual" | "crawl"): Promise<void> {
+async function startRecording(state: WorkflowState, targetUrl: string, mode: "manual" | "auth" | "crawl"): Promise<void> {
   if (isBusy(state)) {
     throw new Error("A recording or generation is already running.");
   }
@@ -161,6 +162,8 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
   state.message =
     mode === "crawl"
       ? "Safe crawl started. SpecMiner is collecting same-origin pages."
+      : mode === "auth"
+        ? "Login-Modus gestartet. Melde dich im Browser an, durchlaufe danach den Zielprozess und klicke in Studio auf Fertig."
       : "Aufzeichnung gestartet. Nutze das geöffnete Browserfenster und klicke danach in Studio auf Fertig.";
   state.log = [];
 
@@ -312,6 +315,27 @@ function publicWorkflowState(state: WorkflowState) {
     finishedAt: state.finishedAt,
     message: state.message,
     log: state.log
+  };
+}
+
+function buildPrivacySummary(run: Awaited<ReturnType<ArtifactStore["readRun"]>>, evidence: Awaited<ReturnType<ArtifactStore["readEvidence"]>>) {
+  const markerNames = ["EMAIL", "PHONE", "CARD", "IBAN", "TOKEN", "SECRET", "PASSWORD"];
+  const text = evidence
+    .map((item) => [item.label, item.textMasked, item.selector, JSON.stringify(item.metadata)].filter(Boolean).join(" "))
+    .join("\n");
+  const markers = markerNames
+    .map((name) => ({ name, count: (text.match(new RegExp(`\\[${name}\\]`, "g")) ?? []).length }))
+    .filter((item) => item.count > 0);
+  const evidenceKinds = evidence.reduce<Record<string, number>>((counts, item) => {
+    counts[item.kind] = (counts[item.kind] ?? 0) + 1;
+    return counts;
+  }, {});
+  return {
+    profile: run.privacyProfile,
+    raw: run.privacyProfile === "raw",
+    evidenceKinds,
+    markers,
+    screenshotMasking: run.privacyProfile === "raw" ? "disabled" : "enabled"
   };
 }
 

@@ -73,6 +73,14 @@ Guided workflow:
 6. Studio generates Markdown, JSON, HTML, Gherkin, review data, and a Playwright skeleton automatically.
 7. Use **Letzte Analysen** to reopen previous runs without terminal commands.
 
+Studio also includes:
+
+- **Login / SSO zuerst** mode for applications where users must authenticate before exploring the relevant workflow.
+- An **Analyse abgeschlossen** summary with generated claim, evidence, screenshot, and open-question counts.
+- Per-claim **Evidence ansehen** links that jump directly to the supporting observations.
+- Review quick actions for accepting, rejecting, or marking claims as edited.
+- A **Datenschutz** summary showing the active privacy profile, screenshot masking status, and detected masking markers.
+
 ## Browser Overlay
 
 During headed recording, SpecMiner injects a small overlay with `Capture`, `Note`, and `Pause` controls. Notes are stored as evidence-backed user actions.

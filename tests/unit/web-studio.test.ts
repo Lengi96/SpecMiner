@@ -15,5 +15,8 @@ describe("renderStudioHtml", () => {
     expect(html).toContain("/api/runs");
     expect(html).toContain("/api/runs/select");
     expect(html).toContain("Letzte Analysen");
+    expect(html).toContain("Login / SSO zuerst");
+    expect(html).toContain("Datenschutz");
+    expect(html).toContain("Evidence ansehen");
   });
 });

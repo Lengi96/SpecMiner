@@ -364,6 +364,55 @@ export function renderStudioHtml(): string {
 
       .workflow-log:not(:empty) { display: block; }
 
+      .completion-card,
+      .privacy-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        display: none;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .completion-card.visible,
+      .privacy-card.visible {
+        display: grid;
+      }
+
+      .completion-card h3,
+      .privacy-card h3 {
+        font-size: 13px;
+        margin: 0;
+      }
+
+      .completion-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .mini-grid {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .mini-stat {
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 8px;
+      }
+
+      .mini-stat strong { display: block; font-size: 18px; }
+      .mini-stat span { color: var(--muted); font-size: 11px; }
+
+      .marker-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
       .run-library {
         border-top: 1px solid var(--border);
         display: grid;
@@ -475,6 +524,32 @@ export function renderStudioHtml(): string {
       .claim-text { color: #334456; font-size: 13px; line-height: 1.45; }
       .claim-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }
 
+      .claim-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .text-button {
+        align-items: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--accent-strong);
+        display: inline-flex;
+        font-size: 12px;
+        font-weight: 700;
+        gap: 6px;
+        min-height: 30px;
+        padding: 6px 9px;
+      }
+
+      .evidence-highlight {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+
       .evidence-preview {
         display: grid;
         gap: 14px;
@@ -552,6 +627,12 @@ export function renderStudioHtml(): string {
         gap: 12px;
         margin-bottom: 12px;
         padding: 14px;
+      }
+
+      .quick-review {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
       }
 
       label { color: var(--muted); display: grid; font-size: 12px; gap: 6px; }
@@ -633,7 +714,7 @@ export function renderStudioHtml(): string {
                 </p>
                 <div class="wizard-form">
                   <label>Website-URL<input class="url-input" id="targetUrl" placeholder="https://example.com" autocomplete="url" /></label>
-                  <label>Modus<select id="recordMode"><option value="manual">Manuell durchklicken</option><option value="crawl">Schneller Überblick</option></select></label>
+                  <label>Modus<select id="recordMode"><option value="manual">Manuell durchklicken</option><option value="auth">Login / SSO zuerst</option><option value="crawl">Schneller Überblick</option></select></label>
                   <button class="action primary" id="startRecording">${icon("cursor")}Start</button>
                   <button class="action" id="stopRecording">${icon("check")}Fertig</button>
                 </div>
@@ -652,6 +733,25 @@ export function renderStudioHtml(): string {
                   </div>
                 </div>
                 <button class="action" id="reloadRun">${icon("refresh")}Aktuellen Run laden</button>
+                <div class="completion-card" id="completionCard">
+                  <h3>Analyse abgeschlossen</h3>
+                  <div class="mini-grid">
+                    <div class="mini-stat"><strong id="doneClaims">0</strong><span>Claims</span></div>
+                    <div class="mini-stat"><strong id="doneEvidence">0</strong><span>Evidence</span></div>
+                    <div class="mini-stat"><strong id="doneScreens">0</strong><span>Screenshots</span></div>
+                    <div class="mini-stat"><strong id="doneQuestions">0</strong><span>Offene Fragen</span></div>
+                  </div>
+                  <div class="completion-actions">
+                    <a class="text-button" href="/artifact/spec.md" target="_blank">${icon("download")}Spec</a>
+                    <a class="text-button" href="/artifact/report.html" target="_blank">${icon("external")}Report</a>
+                    <button class="text-button" data-jump="review">${icon("check")}Review</button>
+                  </div>
+                </div>
+                <div class="privacy-card" id="privacyCard">
+                  <h3>Datenschutz</h3>
+                  <div id="privacySummary" class="run-summary">Maskierungsstatus wird geladen.</div>
+                  <div class="marker-list" id="privacyMarkers"></div>
+                </div>
                 <div class="run-library">
                   <h3>Letzte Analysen</h3>
                   <select class="run-picker" id="runPicker"></select>
@@ -770,6 +870,20 @@ export function renderStudioHtml(): string {
       document.querySelectorAll("[data-jump]").forEach((button) => {
         button.addEventListener("click", () => showView(button.dataset.jump));
       });
+      document.body.addEventListener("click", (event) => {
+        const evidenceButton = event.target.closest("[data-evidence-filter]");
+        if (evidenceButton) {
+          focusEvidence(evidenceButton.dataset.evidenceFilter);
+        }
+        const reviewButton = event.target.closest("[data-review-set]");
+        if (reviewButton) {
+          setReviewStatus(reviewButton.dataset.reviewSet, reviewButton.dataset.reviewStatus);
+        }
+        const jumpButton = event.target.closest("[data-jump]");
+        if (jumpButton) {
+          showView(jumpButton.dataset.jump);
+        }
+      });
       byId("refreshButton").addEventListener("click", load);
       byId("reloadRun").addEventListener("click", load);
       byId("loadSelectedRun").addEventListener("click", loadSelectedRun);
@@ -796,6 +910,8 @@ export function renderStudioHtml(): string {
         renderClaims();
         renderEvidence();
         renderReview();
+        renderCompletion();
+        renderPrivacy();
         await loadRuns();
       }
 
@@ -969,7 +1085,8 @@ export function renderStudioHtml(): string {
       }
 
       function renderClaim(claim) {
-        return '<article class="claim"><div><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span><span class="kind-chip">' + esc(claim.confidence) + '</span></div><p class="claim-text" style="margin-top:8px">' + esc(claim.text) + '</p></div><div class="muted">' + esc(claim.evidenceIds.length) + ' ev</div></article>';
+        const firstEvidence = claim.evidenceIds[0] || "";
+        return '<article class="claim"><div><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span><span class="kind-chip">' + esc(claim.confidence) + '</span></div><p class="claim-text" style="margin-top:8px">' + esc(claim.text) + '</p><div class="claim-actions"><button class="text-button" data-evidence-filter="' + esc(firstEvidence) + '">' + iconSvg("folder") + 'Evidence ansehen</button><button class="text-button" data-jump="review">' + iconSvg("check") + 'Review</button></div></div><div class="muted">' + esc(claim.evidenceIds.length) + ' ev</div></article>';
       }
 
       function renderEvidence() {
@@ -982,7 +1099,7 @@ export function renderStudioHtml(): string {
           '<figure class="screenshot-frame"><img src="/artifact/' + esc(item.artifactPath) + '" alt="Screenshot evidence"><figcaption class="muted" style="padding:10px">' + esc(item.id) + '</figcaption></figure>'
         ).join("");
         byId("evidenceRows").innerHTML = evidence.slice(0, 200).map((item) =>
-          '<tr><td><span class="kind-chip">' + esc(item.kind) + '</span></td><td><div class="truncate">' + esc(labelForEvidence(item)) + '</div></td><td class="muted"><div class="truncate">' + esc(item.url) + '</div></td><td class="evidence-id">' + esc(shortId(item.id)) + '</td></tr>'
+          '<tr data-evidence-row="' + esc(item.id) + '"><td><span class="kind-chip">' + esc(item.kind) + '</span></td><td><div class="truncate">' + esc(labelForEvidence(item)) + '</div></td><td class="muted"><div class="truncate">' + esc(item.url) + '</div></td><td class="evidence-id">' + esc(shortId(item.id)) + '</td></tr>'
         ).join("");
       }
 
@@ -992,7 +1109,7 @@ export function renderStudioHtml(): string {
         byId("reviewList").innerHTML = state.review.claims.map((entry) => {
           const claim = claims.get(entry.claimId);
           if (!claim) return "";
-          return '<article class="review-card"><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span></div><p class="claim-text">' + esc(claim.text) + '</p><label>Status<select data-status="' + esc(entry.claimId) + '"><option>draft</option><option>accepted</option><option>rejected</option><option>edited</option></select></label><label>Reviewer note<textarea data-note="' + esc(entry.claimId) + '">' + esc(entry.reviewerNote) + '</textarea></label></article>';
+          return '<article class="review-card"><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span></div><p class="claim-text">' + esc(claim.text) + '</p><div class="quick-review"><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="accepted">Akzeptieren</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="rejected">Ablehnen</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="edited">Bearbeiten</button><button class="text-button" data-evidence-filter="' + esc(claim.evidenceIds[0] || "") + '">Evidence</button></div><label>Status<select data-status="' + esc(entry.claimId) + '"><option>draft</option><option>accepted</option><option>rejected</option><option>edited</option></select></label><label>Reviewer note<textarea data-note="' + esc(entry.claimId) + '">' + esc(entry.reviewerNote) + '</textarea></label></article>';
         }).join("");
         state.review.claims.forEach((entry) => {
           const select = document.querySelector('[data-status="' + entry.claimId + '"]');
@@ -1010,6 +1127,46 @@ export function renderStudioHtml(): string {
         byId("saveReview").textContent = "Saved";
         setTimeout(() => { byId("saveReview").innerHTML = '${icon("check")}Save review'; }, 1200);
       });
+
+      function renderCompletion() {
+        const ready = workflow?.status === "ready" || Boolean(state.spec.claims.length);
+        byId("completionCard").classList.toggle("visible", ready);
+        byId("doneClaims").textContent = state.spec.claims.length;
+        byId("doneEvidence").textContent = state.evidence.length;
+        byId("doneScreens").textContent = screenshots().length;
+        byId("doneQuestions").textContent = state.spec.openQuestions.length;
+      }
+
+      function renderPrivacy() {
+        const privacy = state.privacy || {};
+        byId("privacyCard").classList.add("visible");
+        byId("privacySummary").textContent = privacy.raw
+          ? "Rohmodus aktiv: Maskierung ist deaktiviert."
+          : "Profil " + (privacy.profile || "default") + " aktiv, Screenshot-Maskierung " + (privacy.screenshotMasking === "enabled" ? "aktiv" : "inaktiv") + ".";
+        byId("privacyMarkers").innerHTML = (privacy.markers || []).length
+          ? privacy.markers.map((marker) => '<span class="kind-chip">' + esc(marker.name) + ': ' + esc(marker.count) + '</span>').join("")
+          : '<span class="kind-chip observation">Keine Maskierungsmarker gefunden</span>';
+      }
+
+      function focusEvidence(evidenceId) {
+        if (!evidenceId) return;
+        showView("evidence");
+        byId("evidenceSearch").value = evidenceId;
+        renderEvidence();
+        const row = document.querySelector('[data-evidence-row="' + evidenceId + '"]');
+        if (row) {
+          row.classList.add("evidence-highlight");
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => row.classList.remove("evidence-highlight"), 2200);
+        }
+      }
+
+      function setReviewStatus(claimId, status) {
+        const select = document.querySelector('[data-status="' + claimId + '"]');
+        if (select && status) {
+          select.value = status;
+        }
+      }
 
       function screenshots() {
         return state.evidence.filter((item) => item.kind === "screenshot" && item.artifactPath);
