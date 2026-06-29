@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { fileURLToPath } from "node:url";
 import { ArtifactStore, safeFileStem } from "../artifacts/artifact-store.js";
 import type {
   ElementObservation,
@@ -273,6 +274,10 @@ export class PageAnalyzer {
   }
 
   private async extractPageAnalysis(page: Page): Promise<RawPageAnalysis> {
+    if (fileURLToPath(import.meta.url).endsWith(".ts")) {
+      // TSX/esbuild can emit this helper inside serialized page.evaluate callbacks.
+      await page.evaluate("globalThis.__name ??= (target) => target");
+    }
     return page.evaluate(() => {
       function cssPath(element: Element): string {
         const parts: string[] = [];

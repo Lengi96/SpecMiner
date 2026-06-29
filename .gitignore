@@ -7,3 +7,4 @@ coverage/
 auth.json
 playwright/.cache/
 test-results/
+debug.log

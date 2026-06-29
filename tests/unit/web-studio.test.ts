@@ -18,5 +18,6 @@ describe("renderStudioHtml", () => {
     expect(html).toContain("Login / SSO zuerst");
     expect(html).toContain("Datenschutz");
     expect(html).toContain("Evidence ansehen");
+    expect(html).toContain("data-edited-text");
   });
 });

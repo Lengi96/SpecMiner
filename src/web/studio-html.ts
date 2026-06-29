@@ -884,6 +884,12 @@ export function renderStudioHtml(): string {
           showView(jumpButton.dataset.jump);
         }
       });
+      document.body.addEventListener("change", (event) => {
+        const statusSelect = event.target.closest('select[data-status]');
+        if (statusSelect) {
+          setReviewStatus(statusSelect.dataset.status, statusSelect.value);
+        }
+      });
       byId("refreshButton").addEventListener("click", load);
       byId("reloadRun").addEventListener("click", load);
       byId("loadSelectedRun").addEventListener("click", loadSelectedRun);
@@ -1109,7 +1115,7 @@ export function renderStudioHtml(): string {
         byId("reviewList").innerHTML = state.review.claims.map((entry) => {
           const claim = claims.get(entry.claimId);
           if (!claim) return "";
-          return '<article class="review-card"><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span></div><p class="claim-text">' + esc(claim.text) + '</p><div class="quick-review"><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="accepted">Akzeptieren</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="rejected">Ablehnen</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="edited">Bearbeiten</button><button class="text-button" data-evidence-filter="' + esc(claim.evidenceIds[0] || "") + '">Evidence</button></div><label>Status<select data-status="' + esc(entry.claimId) + '"><option>draft</option><option>accepted</option><option>rejected</option><option>edited</option></select></label><label>Reviewer note<textarea data-note="' + esc(entry.claimId) + '">' + esc(entry.reviewerNote) + '</textarea></label></article>';
+          return '<article class="review-card"><div class="claim-meta"><span class="kind-chip ' + esc(claim.kind) + '">' + esc(claim.kind.replace("_", " ")) + '</span><span class="kind-chip">' + esc(claim.category) + '</span></div><p class="claim-text">' + esc(claim.text) + '</p><div class="quick-review"><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="accepted">Akzeptieren</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="rejected">Ablehnen</button><button class="text-button" data-review-set="' + esc(entry.claimId) + '" data-review-status="edited">Bearbeiten</button><button class="text-button" data-evidence-filter="' + esc(claim.evidenceIds[0] || "") + '">Evidence</button></div><label>Status<select data-status="' + esc(entry.claimId) + '"><option>draft</option><option>accepted</option><option>rejected</option><option>edited</option></select></label><label data-edited-field="' + esc(entry.claimId) + '" class="' + (entry.status === "edited" ? "" : "hidden") + '">Überarbeiteter Claim-Text<textarea data-edited-text="' + esc(entry.claimId) + '">' + esc(entry.editedText || claim.text) + '</textarea></label><label>Reviewer note<textarea data-note="' + esc(entry.claimId) + '">' + esc(entry.reviewerNote) + '</textarea></label></article>';
         }).join("");
         state.review.claims.forEach((entry) => {
           const select = document.querySelector('[data-status="' + entry.claimId + '"]');
@@ -1118,13 +1124,23 @@ export function renderStudioHtml(): string {
       }
 
       byId("saveReview").addEventListener("click", async () => {
-        state.review.claims = state.review.claims.map((entry) => ({
-          ...entry,
-          status: document.querySelector('[data-status="' + entry.claimId + '"]')?.value ?? entry.status,
-          reviewerNote: document.querySelector('[data-note="' + entry.claimId + '"]')?.value ?? entry.reviewerNote
-        }));
-        await fetch("/api/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.review, null, 2) });
-        byId("saveReview").textContent = "Saved";
+        state.review.claims = state.review.claims.map((entry) => {
+          const status = document.querySelector('[data-status="' + entry.claimId + '"]')?.value ?? entry.status;
+          const editedText = document.querySelector('[data-edited-text="' + entry.claimId + '"]')?.value ?? entry.editedText;
+          return {
+            ...entry,
+            status,
+            reviewerNote: document.querySelector('[data-note="' + entry.claimId + '"]')?.value ?? entry.reviewerNote,
+            editedText: status === "edited" ? editedText : undefined
+          };
+        });
+        const response = await fetch("/api/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(state.review, null, 2) });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: "Review konnte nicht gespeichert werden." }));
+          byId("saveReview").textContent = error.error || "Fehler beim Speichern";
+          return;
+        }
+        byId("saveReview").textContent = "Gespeichert";
         setTimeout(() => { byId("saveReview").innerHTML = '${icon("check")}Save review'; }, 1200);
       });
 
@@ -1165,6 +1181,10 @@ export function renderStudioHtml(): string {
         const select = document.querySelector('[data-status="' + claimId + '"]');
         if (select && status) {
           select.value = status;
+          document.querySelector('[data-edited-field="' + claimId + '"]')?.classList.toggle("hidden", status !== "edited");
+          if (status === "edited") {
+            document.querySelector('[data-edited-text="' + claimId + '"]')?.focus();
+          }
         }
       }
 

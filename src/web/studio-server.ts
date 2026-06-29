@@ -1,12 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { buildCoverageReport } from "../coverage/coverage-report.js";
 import { SpecGenerator } from "../generator/spec-generator.js";
-import { createReviewDraft } from "../review/review-draft.js";
+import type { SpecDocument } from "../models/types.js";
+import { createReviewDraft, type ReviewDraft, type ReviewStatus } from "../review/review-draft.js";
 import { renderStudioHtml } from "./studio-html.js";
 
 export interface StudioServerOptions {
@@ -28,6 +31,7 @@ interface WorkflowState {
   message?: string;
   log: string[];
   child?: ChildProcess;
+  closing: boolean;
 }
 
 interface RunSummary {
@@ -40,6 +44,12 @@ interface RunSummary {
   isCurrent: boolean;
 }
 
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 export async function serveStudio(options: StudioServerOptions): Promise<{ close: () => Promise<void>; url: string }> {
   const initialRoot = resolve(options.runDir);
   const state: WorkflowState = {
@@ -48,26 +58,37 @@ export async function serveStudio(options: StudioServerOptions): Promise<{ close
     status: "idle",
     lastRunDir: initialRoot,
     message: "Bereit.",
-    log: []
+    log: [],
+    closing: false
   };
   const server = createServer(async (request, response) => {
     try {
       await routeRequest(state, request, response);
     } catch (error) {
-      response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      const status = error instanceof HttpError ? error.status : 500;
+      response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
 
   await new Promise<void>((resolveListen) => server.listen(options.port, options.host, resolveListen));
+  const address = server.address() as AddressInfo;
   return {
-    url: `http://${options.host}:${options.port}/`,
-    close: () => new Promise((resolveClose, reject) => server.close((error) => (error ? reject(error) : resolveClose())))
+    url: `http://${options.host}:${address.port}/`,
+    close: async () => {
+      state.closing = true;
+      await terminateActiveChild(state);
+      await new Promise<void>((resolveClose, reject) => server.close((error) => (error ? reject(error) : resolveClose())));
+    }
   };
 }
 
 async function routeRequest(state: WorkflowState, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (request.method === "POST" && !isTrustedOrigin(request)) {
+    send(response, 403, "application/json; charset=utf-8", JSON.stringify({ error: "Cross-origin Studio changes are not allowed." }));
+    return;
+  }
   if (url.pathname === "/") {
     send(response, 200, "text/html; charset=utf-8", renderStudioHtml());
     return;
@@ -85,7 +106,7 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
       send(response, 409, "application/json; charset=utf-8", JSON.stringify({ error: "Cannot switch runs while SpecMiner is recording or generating." }));
       return;
     }
-    const body = JSON.parse(await readRequestBody(request)) as { dir?: string };
+    const body = await parseJsonBody<{ dir?: string }>(request);
     const nextRoot = safeRunRoot(state, String(body.dir ?? ""));
     await new ArtifactStore(nextRoot).readRun();
     state.currentRoot = nextRoot;
@@ -95,13 +116,14 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
     return;
   }
   if (url.pathname === "/api/workflow/start" && request.method === "POST") {
-    const body = JSON.parse(await readRequestBody(request)) as { url?: string; mode?: "manual" | "auth" | "crawl" };
-    const targetUrl = String(body.url ?? "").trim();
-    if (!/^https?:\/\//i.test(targetUrl)) {
-      send(response, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Please enter a valid http(s) URL." }));
+    const body = await parseJsonBody<{ url?: string; mode?: "manual" | "auth" | "crawl" }>(request);
+    const mode = body.mode ?? "manual";
+    if (!(["manual", "auth", "crawl"] as const).includes(mode)) {
+      send(response, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Unsupported recording mode." }));
       return;
     }
-    await startRecording(state, targetUrl, body.mode ?? "manual");
+    const targetUrl = normalizeTargetUrl(String(body.url ?? ""));
+    await startRecording(state, targetUrl, mode);
     send(response, 202, "application/json; charset=utf-8", JSON.stringify(publicWorkflowState(state)));
     return;
   }
@@ -111,6 +133,10 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
     return;
   }
   if (url.pathname === "/api/workflow/generate" && request.method === "POST") {
+    if (isBusy(state)) {
+      send(response, 409, "application/json; charset=utf-8", JSON.stringify({ error: "Cannot generate while another workflow is running." }));
+      return;
+    }
     const runDir = state.activeRunDir ?? state.lastRunDir ?? state.currentRoot;
     void generateRun(state, runDir);
     send(response, 202, "application/json; charset=utf-8", JSON.stringify(publicWorkflowState(state)));
@@ -132,9 +158,11 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
   }
   if (url.pathname === "/api/review" && request.method === "POST") {
     const root = state.currentRoot;
-    const body = await readRequestBody(request);
-    JSON.parse(body);
-    await writeFile(join(root, "review.json"), body, "utf8");
+    const store = new ArtifactStore(root);
+    const run = await store.readRun();
+    const spec = await readOrGenerateSpec(root, run, await store.readEvidence(), await store.readEvents(), await store.readPageSnapshots());
+    const review = validateReviewDraft(await parseJsonBody(request), run.id, new Set(spec.claims.map((claim) => claim.id)));
+    await writeFile(join(root, "review.json"), `${JSON.stringify(review, null, 2)}\n`, "utf8");
     send(response, 200, "application/json; charset=utf-8", JSON.stringify({ ok: true }));
     return;
   }
@@ -149,7 +177,74 @@ async function routeRequest(state: WorkflowState, request: IncomingMessage, resp
   send(response, 404, "text/plain; charset=utf-8", "Not found");
 }
 
+function isTrustedOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTargetUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new HttpError(400, "Please enter a valid http(s) URL.");
+  }
+  if (!(["http:", "https:"] as const).includes(parsed.protocol as "http:" | "https:")) {
+    throw new HttpError(400, "Only http(s) URLs are supported.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, "URLs containing credentials are not supported.");
+  }
+  return parsed.href;
+}
+
+function validateReviewDraft(value: unknown, runId: string, claimIds: Set<string>): ReviewDraft {
+  if (!value || typeof value !== "object") throw new HttpError(400, "Invalid review document.");
+  const input = value as Partial<ReviewDraft>;
+  if (input.runId !== runId || !Array.isArray(input.claims)) throw new HttpError(400, "Review does not belong to the current run.");
+  const statuses = new Set<ReviewStatus>(["draft", "accepted", "rejected", "edited"]);
+  const seen = new Set<string>();
+  const claims = input.claims.map((entry) => {
+    if (!entry || typeof entry !== "object") throw new HttpError(400, "Invalid review claim.");
+    const claimId = String(entry.claimId ?? "");
+    const status = entry.status as ReviewStatus;
+    if (!claimIds.has(claimId) || seen.has(claimId) || !statuses.has(status)) throw new HttpError(400, `Invalid review claim: ${claimId}`);
+    seen.add(claimId);
+    const reviewerNote = String(entry.reviewerNote ?? "");
+    const editedText = entry.editedText === undefined ? undefined : String(entry.editedText);
+    if (reviewerNote.length > 10_000 || (editedText?.length ?? 0) > 50_000) throw new HttpError(400, "Review text exceeds the allowed size.");
+    if (status === "edited" && !editedText?.trim()) throw new HttpError(400, `Edited review claim requires text: ${claimId}`);
+    return { claimId, status, reviewerNote, ...(editedText === undefined ? {} : { editedText }) };
+  });
+  if (claims.length !== claimIds.size) throw new HttpError(400, "Review must contain every claim from the current run.");
+  return { runId, createdAt: typeof input.createdAt === "string" ? input.createdAt : new Date().toISOString(), claims };
+}
+
+async function terminateActiveChild(state: WorkflowState): Promise<void> {
+  const child = state.child;
+  if (!child || child.exitCode !== null) return;
+  if (state.status === "recording") {
+    child.stdin?.write("\n");
+    await Promise.race([once(child, "close"), delay(3_000)]);
+  }
+  if (child.exitCode === null) {
+    child.kill();
+    await Promise.race([once(child, "close"), delay(1_000)]);
+  }
+  state.child = undefined;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
 async function startRecording(state: WorkflowState, targetUrl: string, mode: "manual" | "auth" | "crawl"): Promise<void> {
+  if (state.closing) throw new HttpError(503, "Studio is shutting down.");
   if (isBusy(state)) {
     throw new Error("A recording or generation is already running.");
   }
@@ -167,12 +262,11 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
       : "Aufzeichnung gestartet. Nutze das geöffnete Browserfenster und klicke danach in Studio auf Fertig.";
   state.log = [];
 
-  const cliPath = fileURLToPath(new URL("../cli/index.js", import.meta.url));
-  const args =
+  const commandArgs =
     mode === "crawl"
-      ? [cliPath, "crawl", targetUrl, "--out", runDir, "--max-pages", "5"]
-      : [cliPath, "record", targetUrl, "--out", runDir, "--headed"];
-  const child = spawn(process.execPath, args, {
+      ? ["crawl", targetUrl, "--out", runDir, "--max-pages", "5"]
+      : ["record", targetUrl, "--out", runDir, "--headed"];
+  const child = spawn(process.execPath, cliInvocation(commandArgs), {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"]
   });
@@ -187,6 +281,7 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
   });
   child.on("close", (code) => {
     state.child = undefined;
+    if (state.closing) return;
     if (code !== 0) {
       state.status = "failed";
       state.message = `Recording failed with exit code ${code ?? "unknown"}.`;
@@ -198,7 +293,7 @@ async function startRecording(state: WorkflowState, targetUrl: string, mode: "ma
 }
 
 function isBusy(state: WorkflowState): boolean {
-  return Boolean(state.child) || ["recording", "crawling", "stopping", "generating"].includes(state.status);
+  return state.closing || Boolean(state.child) || ["recording", "crawling", "stopping", "generating"].includes(state.status);
 }
 
 async function listRuns(state: WorkflowState): Promise<RunSummary[]> {
@@ -256,11 +351,10 @@ async function stopRecording(state: WorkflowState): Promise<void> {
 }
 
 async function generateRun(state: WorkflowState, runDir: string): Promise<void> {
+  if (state.closing) return;
   state.status = "generating";
   state.message = "Anforderungen, Review-Entwurf, Report, Gherkin und Playwright-Skeleton werden erzeugt.";
-  const cliPath = fileURLToPath(new URL("../cli/index.js", import.meta.url));
-  const child = spawn(process.execPath, [
-    cliPath,
+  const child = spawn(process.execPath, cliInvocation([
     "generate",
     runDir,
     "--format",
@@ -268,7 +362,7 @@ async function generateRun(state: WorkflowState, runDir: string): Promise<void> 
     "--gherkin",
     "--review",
     "--playwright"
-  ], {
+  ]), {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -283,6 +377,7 @@ async function generateRun(state: WorkflowState, runDir: string): Promise<void> 
   });
   child.on("close", (code) => {
     state.child = undefined;
+    if (state.closing) return;
     state.finishedAt = new Date().toISOString();
     if (code !== 0) {
       state.status = "failed";
@@ -295,6 +390,12 @@ async function generateRun(state: WorkflowState, runDir: string): Promise<void> 
     state.status = "ready";
     state.message = "Analyse fertig. Die generierten Anforderungen sind geladen.";
   });
+}
+
+function cliInvocation(commandArgs: string[]): string[] {
+  const sourceMode = fileURLToPath(import.meta.url).endsWith(".ts");
+  const cliPath = fileURLToPath(new URL(sourceMode ? "../cli/index.ts" : "../cli/index.js", import.meta.url));
+  return sourceMode ? ["--import", "tsx", cliPath, ...commandArgs] : [cliPath, ...commandArgs];
 }
 
 function appendLog(state: WorkflowState, chunk: unknown): void {
@@ -351,9 +452,9 @@ function urlStem(value: string): string {
   }
 }
 
-async function readOrGenerateSpec(root: string, run: Awaited<ReturnType<ArtifactStore["readRun"]>>, evidence: Awaited<ReturnType<ArtifactStore["readEvidence"]>>, events: Awaited<ReturnType<ArtifactStore["readEvents"]>>, pages: Awaited<ReturnType<ArtifactStore["readPageSnapshots"]>>) {
+async function readOrGenerateSpec(root: string, run: Awaited<ReturnType<ArtifactStore["readRun"]>>, evidence: Awaited<ReturnType<ArtifactStore["readEvidence"]>>, events: Awaited<ReturnType<ArtifactStore["readEvents"]>>, pages: Awaited<ReturnType<ArtifactStore["readPageSnapshots"]>>): Promise<SpecDocument> {
   try {
-    return JSON.parse(await readFile(join(root, "spec.json"), "utf8"));
+    return JSON.parse(await readFile(join(root, "spec.json"), "utf8")) as SpecDocument;
   } catch {
     return new SpecGenerator().generate(run, evidence, events, pages);
   }
@@ -392,8 +493,23 @@ function send(response: ServerResponse, status: number, contentType: string, bod
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 2 * 1024 * 1024) {
+      throw new HttpError(413, "Request body exceeds the 2 MB limit.");
+    }
+    chunks.push(buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+async function parseJsonBody<T = unknown>(request: IncomingMessage): Promise<T> {
+  try {
+    return JSON.parse(await readRequestBody(request)) as T;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(400, "Request body must contain valid JSON.");
+  }
 }
